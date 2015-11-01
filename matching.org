@@ -1,0 +1,476 @@
+#+TITLE:    School Choice Algorithms
+#+AUTHOR:    Christoph Schottmüller
+#+EMAIL:    
+#+DATE:      2015-07-31 Fri
+#+DESCRIPTION:
+#+KEYWORDS:
+#+LANGUAGE:  en
+#+OPTIONS:   H:3 num:t toc:nil \n:nil @:t ::t |:t ^:t -:t f:t *:t <:t
+#+OPTIONS:   TeX:t LaTeX:t skip:nil d:nil todo:t pri:nil tags:not-in-toc
+#+INFOJS_OPT: view:nil toc:nil ltoc:nil mouse:underline buttons:0 path:http://orgmode.org/org-info.js
+#+EXPORT_SELECT_TAGS: export
+#+EXPORT_EXCLUDE_TAGS: noexport
+#+HTML_HEAD: <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"> </script>
+
+* Reading in preferences and priorities
+
+A school choice problem consists of the following ingredients: A number of schools and a number of students, for each student a preference ordering over schools, for each school a capacity and a priority ordering over students. If we have $n$ students, we will call these students 0,1,...,n-1. Similarly, we call the $m$ schools 0, 1,...,m-1. We assume that there are two text files which contain all the data:
+
+- the first file has in each line the capacity and priority ordering of one school. A priority ordering is a comma separated list of integers where the first integer is the student number of the student with the highest priority. The first line contains as first entry the capacity and then the priority ordering of school 0, the second of school 1 etc.
+- the second file has in each line the preference ordering of one student. A preference ordering is a comma separated list of integers where the first integer is the school number of the most preferred school etc. The first line contains the preferences of student 0 etc.
+
+The function $read\_sc$ takes the file names of these two files and transforms the data in a usable format. What we want to have is 
+- a list /capacity/ that contains as /k/-th element the capacity of school /k/,
+- a list /priority/ that consists of /m/ lists where the /k/-th list contains the priority ordering of school /k/ (as usual in python we start counting at 0),
+- a list /preference/ that contains /n/ lists where the /k/-th list contains the preference of student /k/.
+
+The following code reads the file containing information on the schools line by line. It deletes the linebreak character '\n', splits the line into a list using ',' as separator, extracts the information necessary, changes the type of the information from string to integer and appends the first number to the capacity list and the rest to the priority list. The same is then done for the student file and the preference list. Finally, all three lists are returned.
+#+BEGIN_SRC python :exports code
+  def read_sc(school,student):
+      """reads in data from two files: 'school' contains in line k first the capacity of school k and then the student numbers separated by ',' ordered according to k's priorities from highest to lowest priority; 'student' has in line k the preferences of student k i.e. a sequence of school numbers from best to worst separated by ',' """
+      school_file = open(school,'r')
+      capacity = []
+      priority = []
+      for line in school_file:
+          line.strip()
+          line = line.split(',')
+          num_line = []
+          for element in line:
+              num_line.append(int(element))
+          capacity.append(num_line.pop(0))
+          priority.append(num_line)
+      school_file.close()
+      stud_file = open(student,'r')
+      preference = []
+      for line in stud_file:
+          line.strip()
+          line = line.split(',')
+          num_line=[]
+          for element in line:
+              num_line.append(int(element))
+          preference.append(num_line)
+      stud_file.close()
+      return priority, capacity, preference
+#+END_SRC
+
+* Generating a school choice problem (randomly)
+
+In order to test the code later on (in case we do not have real data to use), we want to have the possibility to generate example school choice problems. The function below randomly generates such problems. It takes as arguments the number of schools and students. Optional arguments can be used to indicate that only problems where 
+- there is more capacity than students
+- the overcapacity is limited by the given argument
+are generated. The last optional argument indicates whether the problem should be saved in files (in the format that can be read by $read\_sc$; see above). As the function is a bit longer, we split it up in several parts. 
+
+First, the capacity list is created. For each school, a capacity is randomly drawn from a triangular distribution with mode at 0.2*nstud/nschool (and support from nstud/(10*nschool) to 3*nstud/nschool). If the overcapacity option is given, it is checked that indeed there is overcapacity; otherwise the procedure is repeated. Similarly, with the maxovercapacity option.
+
+#+BEGIN_SRC python :exports code
+  def gen_sc(nschool,nstud,overcap=False,maxovercap=False,savefile=False):
+      """generates a (pseudo) random school choice problem with nstud students and nschool schools; if overcap ==True, the problem will have a higher number school places than students; maxovercap is a maximum overcapacity allowed; savefile=True will OVERWRITE/save the generated example in the files school.txt and student.txt in the current working directory"""
+      capacity = []
+      average = float(nstud)/nschool
+      i = 1
+      while i<= nschool:
+          capacity.append(int(random.triangular(average/10.0,3*average,0.2*average)))#draws capacity from a triangular distribution between average/5 and 5*average with mode at 0.9*average
+          i = i + 1
+          #print capacity, i, nschool, sum(capacity)
+          if i == nschool and overcap==True and sum(capacity)<nstud:#checks that enough places for all students are available
+              capacity = []
+              i = 1
+          if maxovercap!=False and sum(capacity)>nstud + maxovercap:
+              capacity = []
+              i = 1
+#+END_SRC
+The next part creates priority and preferences randomly. First a list [1,2,...,nstud] is created and then the order of this list is randomly shuffled.
+
+#+BEGIN_SRC python :exports code
+      priority = []
+      for i in range(nschool):
+          x = range(nstud)
+          random.shuffle(x)
+          priority.append(x)
+      preference = []
+      for j in range(nstud):
+          x = range(nschool)
+          random.shuffle(x)
+          preference.append(x)
+#+END_SRC
+If the overcapacity option is False, then it can be the case that there are more students than capacity and some students remain unmatched. To accommodate this option, a dummy school is created: This school has ample capacity and is least liked by all students. All the students that cannot be matched with any proper school will be assigned to this dummy school by the matching algorithms used below. This  trick avoids some technical problems that would otherwise occur (e.g. having unmatched students after every step of the algorithm). Note that the number of schools including the dummy school is nschool+1. 
+
+#+BEGIN_SRC python :exports code
+      if sum(capacity)<nstud:#creates a dummy school "nschool+1" to which every student not getting a place will be matched
+          for student in preference:
+              student.append(nschool)
+          priority.append(range(nstud))
+          capacity.append(nstud)
+#+END_SRC
+Finally, we save the generated data in files 'school.txt' and 'student.txt' if the relevant option is not False. These files are generated line by line where first the data is changed into string format, striped of the brackets indicating the begin and end of a list and equipped with a line break. Finally, the generated data is returned.
+#+BEGIN_SRC python :exports code
+      if savefile!=False:
+          school_file = open('school.txt','w')
+          for i in range(nschool):
+              line = str(capacity[i]) + ','
+              priority_str = str(priority[i])
+              priority_str = priority_str.strip('[')
+              priority_str = priority_str.strip(']')
+              line = line + priority_str 
+              school_file.write(line)
+              school_file.write("\n")
+          school_file.close()
+          stud_file = open('student.txt','w')
+          for i in range(nstud):
+              line = str(preference[i])
+              line = line.strip('[')
+              line = line.strip(']')
+              stud_file.write(line)
+              stud_file.write("\n")
+          stud_file.close()
+      return priority, capacity, preference
+
+#+END_SRC
+
+* The schoolchoice class
+We now generate a class 'schoolchoice'. An instance of this class is a specific school choice problem, i.e. we have given capacity, priority and preference lists. The class will contain functions that we can use on this specific problems, e.g. matching algorithms. As the code is a bit longer, we split it up in different parts.
+
+When we create an instance of the class we have to give the priority, capacity and preference list as arguments. These become variables of this instance. The number of students and schools is readily derived from these lists and saved. We also create variables that are empty for now but will save the calculated matchings as soon as we have calculated them.
+
+#+BEGIN_SRC python :exports code
+  class schoolchoice:
+      def __init__(self,priority, capacity, preference):
+          """read in data: priorities is a list of lists where the kth lower level list is the priority of school k, capacity is a list of school capacities (same order of schools as in priority), preferences is a list of lists where the ith sublist is the preference ranking of student i"""
+          self.priority = priority
+          self.capacity = capacity
+          self.preference = preference
+          self.nschool = len(capacity)
+          if self.nschool != len(priority):
+              print "input error: capacity and priority list must have same length"
+          self.nstud = len(preference)
+          self.gs_match = []#will contain Gale Shapley match if this is calculated
+          self.boston_match = []
+
+#+END_SRC
+
+** Gale Shapley algorithm
+The Gale Shapley[fn:gs] algorithm creates a matching that has the following advantages
+- strategy proofness for students: no student can improve his outcome by submitting a wrong preference profile.
+- stability: There is no student-school pair such that the student prefers this school over his assigned school and at the same time he has higher priority at this school than some student assigned to it.
+- student optimality among stable matchings: there is no other stable matching in which some student(s) would be assigned a more preferred school than the one he is assigned in the Gale-Shapley algorithm.
+- finiteness: the algorithm converges in a finite number of steps.
+
+The algorithm can be illustrated nicely with the following thought experiment: There are a number of rounds. In each round, every unmatched student applies at his most preferred school among the schools he did not apply in earlier rounds. Schools accept in each round the most preferred students among those students that apply and those students that were matched with the school in the previous round. Of course, each school can in each round not be matched with more students than its capacity. The algorithm stops when all students are matched at the end of a round.
+
+Each round is given by one iteration of the "while flag==0" loop. In each round, we loop over all schools ('for i in range(self.school):'):
+1. first we determine the list of students that have this school as their highest priority and order them according to the school's priority ('proposers').
+2. we match either all proposers (less proposers than capacity) or as many as possible with the school. In the latter case, the unmatched students are put in the list 'unmatched'.
+At the end of the round, we check whether there are unmatched students. If not, the algorithm stops. If there are unmatched students, we delete the first preference in their preference ordering (this is the schooled to which they applied in this round and could not get in). This little trick is notationally convenient as it allows us to say that everyone applies to his most preferred school in the remaining preference ordering in each round (see step 1 above).
+
+#+BEGIN_SRC python :exports code
+      def gs(self):
+          """uses the Gale Shapley student proposing algorithm to solve the matching problem"""
+          flag = 0 #dummy used to indicate whether the algorithm has finished
+          pref = list(self.preference) #useful as the algorithm manipulates this list
+          while flag == 0:
+              flag = 1
+              match = []#contains list of lists where the kth lower level list are the students matched with school k
+              unmatched = []#list of unmatched students
+              for i in range(self.nschool):
+                  proposers = filter(lambda x: i==pref[x][0],self.priority[i])# list of students proposing to i in this round
+                  if len(proposers)<=self.capacity[i]:
+                      match.append(proposers)
+                  else:
+                      match.append(proposers[:self.capacity[i]])
+                      unmatched = unmatched +proposers[self.capacity[i]:]
+              if unmatched != []:
+                  flag = 0
+                  for j in unmatched:
+                      pref[j]=pref[j][1:] #deletes the top preference for the unmatched
+          self.gs_match = list(match)
+          return match
+#+END_SRC
+
+** Boston student matching algorithm
+
+This algorithm was used in Boston (and other cities) for some time. It has the advantage that the matching is Pareto efficient if all students submit their true preferences. Unfortunately, it is not strategy proof which means that for some preference profiles some students could benefit from submitting a wrong preference ('game the system').
+
+The algorithm works in rounds. In round 1, we try to put all students to the school that is their most preferred school. If the number of students having school /k/ as most preferred is higher than the capacity of school /k/, we use the priority ordering of /k/ to determine who gets the place. In round 2, we try to allocate all the students that did not get a place in the first round to their second most preferred school. If the remaining capacity of a school ('remaining' because some students got a place there in the first round), we use the priority order to determine who gets the place. We continue like this until all students have a place.
+
+Each round is given by one iteration of the 'while flag==0' loop. As in the Gale Shapley algorithm, we the loop over schools ('for i in range(self.nschool)'). The list of 'proposers' (unmatched students who have this school as their top remaining choice) is ordered according to the school's priority ranking and as many as possible are allocated to the remaining capacity (we then reduce the remaining capacity accordingly). The one's that could not be matched are put on the unmatched list, the one's matched to school $i$ are put on the match[i] list. The algorithm stops if no student is unmatched at the end of a round. At the end of a round, the top preference of the unmatched is deleted from their preferences. This allows us to write out code as if everyone only considers his top preference in each round.
+
+#+BEGIN_SRC python :exports code
+
+      def boston(self):
+          """uses the Boston school matching algorithm to solve the matching problem"""
+          flag = 0 #dummy used to indicate whether the algorithm has finished
+          pref = list(self.preference) #useful as the algorithm manipulates this list
+          capa = list(self.capacity) #useful as the algorithm manipulates this list
+          match = [[] for i in range(self.nschool)] #list of nschool empty lists, kth list is list of students at school k
+          while flag == 0:
+              flag = 1
+              unmatched = []#list of unmatched students
+              for i in range(self.nschool):
+                  proposers = filter(lambda x: i==pref[x][0] and x not in match[i],self.priority[i])# list of students proposing to i in this round
+                  if len(proposers)<=capa[i]:
+                      match[i] = match[i] + proposers
+                      capa[i] = capa[i] - len(proposers)
+                  else:
+                      match[i] = match[i] + proposers[:capa[i]]
+                      unmatched = unmatched + proposers[capa[i]:]
+                      capa[i] = 0
+              if unmatched != []:
+                  flag = 0
+                  for j in unmatched:
+                      pref[j].pop(0) #deletes the top preference for the unmatched
+
+#+END_SRC
+
+* Saving calculated matchings
+There are two convenient ways to represent a matching: first, a list that gives for each student the school he is assigned. Second, a list that gives for each school the students it is assigned.
+
+The function below creates both files for a given match (file names are optional). Matchings are represented as a list of lists where the /k/-th lower level list contains the students assigned to school /k/. Hence, going through the matching one lower level list at a time only requires a bit of formatting to get the matching in the second representation. To get the firs representation, we create for every student the (student,school) tuple and sort those tuples according to student numbers before doing some basic formatting and saving.
+
+#+BEGIN_SRC python :exports code
+  def save_match(match,filename_school='match_school.txt',filename_student='match_student.txt'):
+      """saves a given match in 2 files: 'match_school' contains in line k the student numbers matched to school k; 'match_student' contains in line k the school matched to student k"""
+      student_lst1 = []
+      school_lst = open(filename_school,'w')
+      for school in range(len(match)):
+          for student in match[school]:
+              student_lst1.append((student,school))
+          line = str(match[school].sort())
+          line = line.strip('[')
+          line = line.strip(']')
+          school_lst.write(line)
+          school_lst.write('\n')
+      student_lst1 = sorted(student_lst1)
+      student_lst = open(filename_student,'w')
+      for item in student_lst1:
+          student_lst.write(str(item[1]))
+          student_lst.write('\n')
+      student_lst.close()
+      school_lst.close()
+#+END_SRC
+
+* All code together in one program and examples of usage
+#+Name: scp
+#+BEGIN_SRC python :exports code :session example :tangle yes
+  import random
+  import cPickle as pickle
+
+  def read_sc(school,student):
+      """reads in data from two files: 'school' contains in line k first the capacity of school k and then the student numbers separated by ',' ordered according to k's priorities from highest to lowest priority; 'student' has in line k the preferences of student k i.e. a sequence of school numbers from best to worst separated by ',' """
+      school_file = open(school,'r')
+      capacity = []
+      priority = []
+      for line in school_file:
+          line.strip()
+          line = line.split(',')
+          num_line = []
+          for element in line:
+              num_line.append(int(element))
+          capacity.append(num_line.pop(0))
+          priority.append(num_line)
+      school_file.close()
+      stud_file = open(student,'r')
+      preference = []
+      for line in stud_file:
+          line.strip()
+          line = line.split(',')
+          num_line=[]
+          for element in line:
+              num_line.append(int(element))
+          preference.append(num_line)
+      stud_file.close()
+      return priority, capacity, preference
+
+
+  def gen_sc(nschool,nstud,overcap=False,maxovercap=False,savefile=False):
+      """generates a (pseudo) random school choice problem with nstud students and nschool schools; if overcap ==True, the problem will have a higher number school places than students; maxovercap is a maximum overcapacity allowed; savefile=True will OVERWRITE/save the generated example in the files school.txt and student.txt in the current working directory"""
+      capacity = []
+      average = float(nstud)/nschool
+      i = 1
+      while i<= nschool:
+          capacity.append(int(random.triangular(average/10.0,3*average,0.2*average)))#draws capacity from a triangular distribution between average/5 and 5*average with mode at 0.9*average
+          i = i + 1
+          #print capacity, i, nschool, sum(capacity)
+          if i == nschool and overcap==True and sum(capacity)<nstud:#checks that enough places for all students are available
+              capacity = []
+              i = 1
+          if maxovercap!=False and sum(capacity)>nstud + maxovercap:
+              capacity = []
+              i = 1
+      priority = []
+      for i in range(nschool):
+          x = range(nstud)
+          random.shuffle(x)
+          priority.append(x)
+      preference = []
+      for j in range(nstud):
+          x = range(nschool)
+          random.shuffle(x)
+          preference.append(x)
+      if sum(capacity)<nstud:#creates a dummy school "nschool+1" to which every student not getting a place will be matched
+          for student in preference:
+              student.append(nschool)
+          priority.append(range(nstud))
+          capacity.append(nstud)
+      if savefile!=False:
+          school_file = open('school.txt','w')
+          for i in range(nschool):
+              line = str(capacity[i]) + ','
+              priority_str = str(priority[i])
+              priority_str = priority_str.strip('[')
+              priority_str = priority_str.strip(']')
+              line = line + priority_str 
+              school_file.write(line)
+              school_file.write("\n")
+          school_file.close()
+          stud_file = open('student.txt','w')
+          for i in range(nstud):
+              line = str(preference[i])
+              line = line.strip('[')
+              line = line.strip(']')
+              stud_file.write(line)
+              stud_file.write("\n")
+          stud_file.close()
+      return priority, capacity, preference
+
+  class schoolchoice:
+      def __init__(self,priority, capacity, preference):
+          """read in data: priorities is a list of lists where the kth lower level list is the priority of school k, capacity is a list of school capacities (same order of schools as in priority), preferences is a list of lists where the ith sublist is the preference ranking of student i"""
+          self.priority = priority
+          self.capacity = capacity
+          self.preference = preference
+          self.nschool = len(capacity)
+          if self.nschool != len(priority):
+              print "input error: capacity and priority list must have same length"
+          self.nstud = len(preference)
+          self.gs_match = []#will contain Gale Shapley match if this is calculated
+          self.boston_match = []
+      #
+      def gs(self):
+          """uses the Gale Shapley student proposing algorithm to solve the matching problem"""
+          flag = 0 #dummy used to indicate whether the algorithm has finished
+          pref = list(self.preference) #useful as the algorithm manipulates this list
+          while flag == 0:
+              flag = 1
+              match = []#contains list of lists where the kth lower level list are the students matched with school k
+              unmatched = []#list of unmatched students
+              for i in range(self.nschool):
+                  proposers = filter(lambda x: i==pref[x][0],self.priority[i])# list of students proposing to i in this round
+                  if len(proposers)<=self.capacity[i]:
+                      match.append(proposers)
+                  else:
+                      match.append(proposers[:self.capacity[i]])
+                      unmatched = unmatched +proposers[self.capacity[i]:]
+              if unmatched != []:
+                  flag = 0
+                  for j in unmatched:
+                      pref[j]=pref[j][1:]#pref[j].pop(0) #deletes the top preference for the unmatched
+          self.gs_match = list(match)
+          return match
+      #
+      def boston(self):
+          """uses the Boston school matching algorithm to solve the matching problem"""
+          flag = 0 #dummy used to indicate whether the algorithm has finished
+          pref = list(self.preference) #useful as the algorithm manipulates this list
+          capa = list(self.capacity) #useful as the algorithm manipulates this list
+          match = [[] for i in range(self.nschool)] #list of nschool empty lists, kth list is list of students at school k
+          while flag == 0:
+              flag = 1
+              unmatched = []#list of unmatched students
+              for i in range(self.nschool):
+                  proposers = filter(lambda x: i==pref[x][0] and x not in match[i],self.priority[i])# list of students proposing to i in this round
+                  if len(proposers)<=capa[i]:
+                      match[i] = match[i] + proposers
+                      capa[i] = capa[i] - len(proposers)
+                  else:
+                      match[i] = match[i] + proposers[:capa[i]]
+                      unmatched = unmatched + proposers[capa[i]:]
+                      capa[i] = 0
+              if unmatched != []:
+                  flag = 0
+                  for j in unmatched:
+                      pref[j].pop(0) #deletes the top preference for the unmatched
+          self.boston_match = list(match)
+          return match
+
+  def save_scp(scp,filename):
+      """saves an existing school choice problem with name scp as filename; advantage: will also save previously calculated matches and not only preferences etc."""
+      with open(filename,'wb') as output:
+          pickle.dump(scp,output,pickle.HIGHEST_PROTOCOL)
+
+  def open_scp(filename):
+      """returns a previously as 'filename' saved school choice problem"""
+      with open(filename,'rb') as input:
+          return pickle.load(input)
+
+  def save_match(match,filename_school='match_school.txt',filename_student='match_student.txt'):
+      """saves a given match in 2 files: 'match_school' contains in line k the student numbers matched to school k; 'match_student' contains in line k the school matched to student k"""
+      student_lst1 = []
+      school_lst = open(filename_school,'w')
+      for school in range(len(match)):
+          for student in match[school]:
+              student_lst1.append((student,school))
+          line = str(match[school])
+          line = line.strip('[')
+          line = line.strip(']')
+          school_lst.write(line)
+          school_lst.write('\n')
+      student_lst1 = sorted(student_lst1)
+      student_lst = open(filename_student,'w')
+      for item in student_lst1:
+          student_lst.write(str(item[1]))
+          student_lst.write('\n')
+      student_lst.close()
+      school_lst.close()
+
+
+#+END_SRC
+
+#+RESULTS: scp
+: None
+
+The following example generates a random problem with 15 students and 3 schools in which the total capacity is (i) at least 15 and (ii) no higher than 15+5=20. The data is not saved in files. This data is used to initialize a school choice problem called 'ex'. The Gale-Shapley matching is printed and then saved. 
+
+#+BEGIN_SRC python :exports both :session example :results output
+  priority,capacity,preference = gen_sc(3,15,True,5,False)
+  ex = schoolchoice(priority,capacity,preference)
+  print ex.gs()
+  save_match(ex.gs_match)
+#+END_SRC
+
+#+RESULTS:
+: [[11, 10, 8, 5, 1, 13, 2, 3, 7, 6], [9, 12, 4, 14], [0]]
+
+The following example generates a similar example as above but this time the example is saved in the files 'school.txt' and 'student.txt'. These are then read and a school choice problem 'ex' is generated. The Gale-Shapley algorithm is run and the matching is saved using the default file names. Then the school choice problem itself is saved to a file called 'example1'. 'ex' is then deleted. Then the saved school choice problem (formerly called 'ex') is opened and saved as 'ex2'. This contains the result from the Gale Shapley algorithm we ran earlier and to illustrate this we print this result.
+
+#+BEGIN_SRC python :exports both :session example :results output
+  print gen_sc(3,15,True,5,True)
+  priority,capacity,preference = read_sc('school.txt','student.txt')
+  ex = schoolchoice(priority,capacity,preference)
+  save_match(ex.gs())
+  save_scp(ex,'example1')
+  del ex
+  ex2 = open_scp('example1')
+  print ex2.gs_match
+#+END_SRC
+
+#+RESULTS:
+: [[2, 4, 11, 8, 1, 12], [13, 3, 7, 0, 9], [14, 6, 5, 10]]
+
+The final example shows that the algorithm works quite fast even for big examples. We create an example with 20.000 students and 150 schools (this is approximately the number of new students in a city of the size of Stockholm) and see how long it takes the PC to solve the Gale Shapley algorithm.
+#+BEGIN_SRC python :session example :exports both :results output
+import time
+start = time.clock()
+priority, capacity, preference = gen_sc(150,20000,True,1000,True)
+ex = schoolchoice(priority, capacity, preference)
+
+mid = time.clock()
+gsmatch = ex.gs()
+end = time.clock()
+save_match(gsmatch)
+last = time.clock()
+
+print mid-start,'seconds to generate example; ', end-mid,'seconds to solve Gale-Shapley algorithm; ', last-end, 'seconds to save matching'
+#+END_SRC
+
+
+[fn:gs] Gale, David, and Lloyd S. Shapley. "College admissions and the stability of marriage." American Mathematical Monthly (1962): 9-15.
