@@ -1,7 +1,6 @@
 
 import random
 import cPickle as pickle
-from numba import jit
 
 def read_sc(school,student):
     """reads in data from two files: 'school' contains in line k first the capacity of school k and then the student numbers separated by ',' ordered according to k's priorities from highest to lowest priority; 'student' has in line k the preferences of student k i.e. a sequence of school numbers from best to worst separated by ',' """
@@ -230,11 +229,3 @@ def save_match(match,filename_school='match_school.txt',filename_student='match_
         student_lst.write('\n')
     student_lst.close()
     school_lst.close()
-
-import time
-priority,capacity,preference = read_sc('school.txt','student.txt')
-ex = schoolchoice(priority,capacity,preference)
-time0 = time.clock()
-ex.gs()
-time1 = time.clock()
-print time1-time0
