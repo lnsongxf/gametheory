@@ -1,6 +1,7 @@
 
 import random
 import cPickle as pickle
+from numba import jit
 
 def read_sc(school,student):
     """reads in data from two files: 'school' contains in line k first the capacity of school k and then the student numbers separated by ',' ordered according to k's priorities from highest to lowest priority; 'student' has in line k the preferences of student k i.e. a sequence of school numbers from best to worst separated by ',' """
@@ -92,6 +93,7 @@ class schoolchoice:
         self.nstud = len(preference)
         self.gs_match = []#will contain Gale Shapley match if this is calculated
         self.boston_match = []
+        self.ttc_match = []
     #
     def gs(self):
         """uses the Gale Shapley student proposing algorithm to solve the matching problem"""
@@ -113,6 +115,65 @@ class schoolchoice:
                 for j in unmatched:
                     pref[j]=pref[j][1:]#pref[j].pop(0) #deletes the top preference for the unmatched
         self.gs_match = list(match)
+        return match
+    #
+    def ttc(self):
+        """Uses the top trading cycle algorithm on the matching problem"""
+        unmatched = range(self.nstud)#unmatched students
+        match = [[] for i in range(self.nschool)]#contains list of lists where the kth lower level list are the students matched with school k
+        pref = list(self.preference)
+        priori = list(self.priority)
+        counter = list(self.capacity)
+        while unmatched != []:
+            cyc_stud = [unmatched[0]]
+            cyc_school = [pref[unmatched[0]][0]]
+            cyc_closed = False#indicates whether we have a cycle
+            while cyc_closed == False:
+                top_stud = priori[cyc_school[len(cyc_school)-1]][0]#student with highest priority in last school in cyc_school
+                if top_stud in cyc_stud:
+                    cyc_closed = True
+                    cyc_stud = cyc_stud[cyc_stud.index(top_stud):] #deletes the students that are not par tof the cycle
+                    for stud in cyc_stud:
+                        school0 = pref[stud][0]#the school to which stud is matched
+                        unmatched.remove(stud)#removes the student from unmatched
+                        match[school0].append(stud)#adds the student to match
+                        counter[school0] = counter[school0] - 1#decreases capacity counter
+                        for k in range(self.nschool):#removes the matched student from all schools priorities
+                            try:#using "try" avoids error if stud is not elligible at a certain school, i.e. not in its priority ranking
+                                priori[k].remove(stud)
+                            except:
+                                pass
+                        if counter[school0] == 0:#removes schools that have no capacity left from remaining students preferences
+                            for j in range(self.nstud):
+                                try:#the remove command below returns an error if a student did not list school0 in his preferences
+                                    pref[j].remove(school0)
+                                except:
+                                    pass
+                else:
+                    cyc_stud.append(top_stud)
+                top_school = pref[cyc_stud[len(cyc_stud)-1]][0]#most preferred school of last student in cyc_stud
+                if top_school in cyc_school and cyc_closed == False:
+                    cyc_closed = True
+                    cyc_school = cyc_school[cyc_school.index(top_school):]
+                    for school in cyc_school:
+                        stud = priori[school][0]#student to which school points
+                        unmatched.remove(stud)#student is removed from unmatched
+                        match[school].append(stud)#adds the student to match
+                        counter[school] = counter[school] - 1#reduce counter by 1
+                        for k in range(self.nschool):#removes the matched student from all schools priorities
+                            try:#using "try" avoids error if stud is not elligible at a certain school, i.e. not in its priority ranking
+                                priori[k].remove(stud)
+                            except:
+                                pass
+                        if counter[school] == 0:#removes schools that have no capacity left from remaining students preferences
+                            for j in range(self.nstud):
+                                try:
+                                    pref[j].remove(school)
+                                except:
+                                    pass
+                elif cyc_closed == False:
+                    cyc_school.append(top_school)
+        self.ttc_match = list(match)
         return match
     #
     def boston(self):
@@ -169,3 +230,11 @@ def save_match(match,filename_school='match_school.txt',filename_student='match_
         student_lst.write('\n')
     student_lst.close()
     school_lst.close()
+
+import time
+priority,capacity,preference = read_sc('school.txt','student.txt')
+ex = schoolchoice(priority,capacity,preference)
+time0 = time.clock()
+ex.gs()
+time1 = time.clock()
+print time1-time0

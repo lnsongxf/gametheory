@@ -1,11 +1,11 @@
 #+TITLE:    School Choice Algorithms
 #+AUTHOR:    Christoph Schottmüller
 #+EMAIL:    
-#+DATE:      2015-07-31 Fri
+#+DATE:      
 #+DESCRIPTION:
 #+KEYWORDS:
 #+LANGUAGE:  en
-#+OPTIONS:   H:3 num:t toc:nil \n:nil @:t ::t |:t ^:t -:t f:t *:t <:t
+#+OPTIONS:   H:3 num:t toc:t \n:nil @:t ::t |:t ^:t -:t f:t *:t <:t
 #+OPTIONS:   TeX:t LaTeX:t skip:nil d:nil todo:t pri:nil tags:not-in-toc
 #+INFOJS_OPT: view:nil toc:nil ltoc:nil mouse:underline buttons:0 path:http://orgmode.org/org-info.js
 #+EXPORT_SELECT_TAGS: export
@@ -186,6 +186,82 @@ At the end of the round, we check whether there are unmatched students. If not, 
           return match
 #+END_SRC
 
+** Top trading cycles algorithm
+
+In this algorithm,[fn:ttc] every student "points" at his most preferred school and every school "points" at its highest ranked student. Then we try to form cycles like $(stud_0,school_a,stud_1,school_b,...,school_z)$ such that each $school_i$ is the most preferred school of the student listed just before it and every student $stud_j$ (for $j>0$) has highest priority at the school listed directly before him and student $stud_0$ has highest priority at $school_z$. If we have such a cycle, all students in the cycle are assigned their most preferred school. Then we repeat this cycle building with all remaining students and schools (that is you can also only point to schools/students that are remaining). "Remaining" are schools that still have empty capacity and students that are not matched yet. This is repeated untill all students are matched. 
+
+Initially all students are unmatched and saved in the list /unmatched/. We use a counter to count down how many seats are left in each school and initialize the counter at full capacity. As long as students are unmatched (/while unmatched!=[]/), we try to construct cycles. We simply start with the first unmatched student and determine his most preferred school. We have two lists:
+- /cyc_stud/ contains the students in our potential cycle
+- /cyc_school/ contains the schools in our potential cycle.
+
+Next we determine the student with highest priority at the - so far - last school in /cyc_school/. 
+- If this student is already in othe /cyc_stud/, then we have found a cycle: It starts at this student and contains all students following after him in /cyc_stud/. Now we have to do a couple of things: Match those students to their most preferred schools, removing the matched students from /unmatched/, decrease the counter of schools that got a student by 1, remove the matched students from the priorities of all schools (so that these schools can no longer point at already matched students in later rounds) and finally remove schools that are full (i.e. whose counter is zero) from students preferences in order to prevent students to point at those schools in later rounds.
+- If the student is not in /cyc_stud/, we add him. Then we do the same as above for the school preferred most by the newly added student. Again, either a cycle is formed (if the school is already in /scy_school/) and then we have to do all the things mentioned above or the school has to be added to /cyc_school/.
+
+The appending goes on until we have a cycle. There will always be a cycle eventually because the problem has a finite number of schools and students. As soon as a cycle is constructed (and all the necessary removals etc. have been done), we start again with the cycle building and continue until all students are matched. Note that it is immaterial that we always start with the first unmatched student: In each round a student can only be in one cycle. If several cycles exist and we match people in one cycle, then the other cycles will remain intact and will be simply picked up in later rounds (the students in those cycles will still get their most preferred school...just a few rounds later).
+
+#+BEGIN_SRC python :exports code
+      def ttc(self):
+          """Uses the top trading cycle algorithm on the matching problem"""
+          unmatched = range(self.nstud)#unmatched students
+          match = [[] for i in range(self.nschool)]#contains list of lists where the kth lower level list are the students matched with school k
+          pref = list(self.preference)
+          priori = list(self.priority)
+          counter = list(self.capacity)
+          while unmatched != []:
+              cyc_stud = [unmatched[0]]#first unmatched student
+              cyc_school = [pref[unmatched[0]][0]]
+              cyc_closed = False#indicates whether we have a cycle
+              while cyc_closed == False:
+                  top_stud = priori[cyc_school[len(cyc_school)-1]][0]#student with highest priority in last school in cyc_school
+                  if top_stud in cyc_stud:
+                      cyc_closed = True
+                      cyc_stud = cyc_stud[cyc_stud.index(top_stud):] #deletes the students that are not par tof the cycle
+                      for stud in cyc_stud:
+                          school0 = pref[stud][0]#the school to which stud is matched
+                          unmatched.remove(stud)#removes the student from unmatched
+                          match[school0].append(stud)#adds the student to match
+                          counter[school0] = counter[school0] - 1#decreases capacity counter
+                          for k in range(self.nschool):#removes the matched student from all schools priorities
+                              try:#using "try" avoids error if stud is not elligible at a certain school, i.e. not in its priority ranking
+                                  priori[k].remove(stud)
+                              except:
+                                  pass
+                          if counter[school0] == 0:#removes schools that have no capacity left from remaining students preferences
+                              for j in range(self.nstud):
+                                  try:#the remove command below returns an error if a student did not list school0 in his preferences
+                                      pref[j].remove(school0)
+                                  except:
+                                      pass
+                  else:
+                      cyc_stud.append(top_stud)
+                  top_school = pref[cyc_stud[len(cyc_stud)-1]][0]#most preferred school of last student in cyc_stud
+                  if top_school in cyc_school and cyc_closed == False:
+                      cyc_closed = True
+                      cyc_school = cyc_school[cyc_school.index(top_school):]
+                      for school in cyc_school:
+                          stud = priori[school][0]#student to which school points
+                          unmatched.remove(stud)#student is removed from unmatched
+                          match[school].append(stud)#adds the student to match
+                          counter[school] = counter[school] - 1#reduce counter by 1
+                          for k in range(self.nschool):#removes the matched student from all schools priorities
+                              try:#using "try" avoids error if stud is not elligible at a certain school, i.e. not in its priority ranking
+                                  priori[k].remove(stud)
+                              except:
+                                  pass
+                          if counter[school] == 0:#removes schools that have no capacity left from remaining students preferences
+                              for j in range(self.nstud):
+                                  try:
+                                      pref[j].remove(school)
+                                  except:
+                                      pass
+                  elif cyc_closed == False:
+                      cyc_school.append(top_school)
+          self.ttc_match = list(match)
+          return match
+#+END_SRC
+
+
 ** Boston student matching algorithm
 
 This algorithm was used in Boston (and other cities) for some time. It has the advantage that the matching is Pareto efficient if all students submit their true preferences. Unfortunately, it is not strategy proof which means that for some preference profiles some students could benefit from submitting a wrong preference ('game the system').
@@ -221,6 +297,7 @@ Each round is given by one iteration of the 'while flag==0' loop. As in the Gale
 
 #+END_SRC
 
+
 * Saving calculated matchings
 There are two convenient ways to represent a matching: first, a list that gives for each student the school he is assigned. Second, a list that gives for each school the students it is assigned.
 
@@ -253,6 +330,7 @@ The function below creates both files for a given match (file names are optional
 #+BEGIN_SRC python :exports code :session example :tangle yes
   import random
   import cPickle as pickle
+  from numba import jit
 
   def read_sc(school,student):
       """reads in data from two files: 'school' contains in line k first the capacity of school k and then the student numbers separated by ',' ordered according to k's priorities from highest to lowest priority; 'student' has in line k the preferences of student k i.e. a sequence of school numbers from best to worst separated by ',' """
@@ -344,6 +422,7 @@ The function below creates both files for a given match (file names are optional
           self.nstud = len(preference)
           self.gs_match = []#will contain Gale Shapley match if this is calculated
           self.boston_match = []
+          self.ttc_match = []
       #
       def gs(self):
           """uses the Gale Shapley student proposing algorithm to solve the matching problem"""
@@ -365,6 +444,65 @@ The function below creates both files for a given match (file names are optional
                   for j in unmatched:
                       pref[j]=pref[j][1:]#pref[j].pop(0) #deletes the top preference for the unmatched
           self.gs_match = list(match)
+          return match
+      #
+      def ttc(self):
+          """Uses the top trading cycle algorithm on the matching problem"""
+          unmatched = range(self.nstud)#unmatched students
+          match = [[] for i in range(self.nschool)]#contains list of lists where the kth lower level list are the students matched with school k
+          pref = list(self.preference)
+          priori = list(self.priority)
+          counter = list(self.capacity)
+          while unmatched != []:
+              cyc_stud = [unmatched[0]]
+              cyc_school = [pref[unmatched[0]][0]]
+              cyc_closed = False#indicates whether we have a cycle
+              while cyc_closed == False:
+                  top_stud = priori[cyc_school[len(cyc_school)-1]][0]#student with highest priority in last school in cyc_school
+                  if top_stud in cyc_stud:
+                      cyc_closed = True
+                      cyc_stud = cyc_stud[cyc_stud.index(top_stud):] #deletes the students that are not par tof the cycle
+                      for stud in cyc_stud:
+                          school0 = pref[stud][0]#the school to which stud is matched
+                          unmatched.remove(stud)#removes the student from unmatched
+                          match[school0].append(stud)#adds the student to match
+                          counter[school0] = counter[school0] - 1#decreases capacity counter
+                          for k in range(self.nschool):#removes the matched student from all schools priorities
+                              try:#using "try" avoids error if stud is not elligible at a certain school, i.e. not in its priority ranking
+                                  priori[k].remove(stud)
+                              except:
+                                  pass
+                          if counter[school0] == 0:#removes schools that have no capacity left from remaining students preferences
+                              for j in range(self.nstud):
+                                  try:#the remove command below returns an error if a student did not list school0 in his preferences
+                                      pref[j].remove(school0)
+                                  except:
+                                      pass
+                  else:
+                      cyc_stud.append(top_stud)
+                  top_school = pref[cyc_stud[len(cyc_stud)-1]][0]#most preferred school of last student in cyc_stud
+                  if top_school in cyc_school and cyc_closed == False:
+                      cyc_closed = True
+                      cyc_school = cyc_school[cyc_school.index(top_school):]
+                      for school in cyc_school:
+                          stud = priori[school][0]#student to which school points
+                          unmatched.remove(stud)#student is removed from unmatched
+                          match[school].append(stud)#adds the student to match
+                          counter[school] = counter[school] - 1#reduce counter by 1
+                          for k in range(self.nschool):#removes the matched student from all schools priorities
+                              try:#using "try" avoids error if stud is not elligible at a certain school, i.e. not in its priority ranking
+                                  priori[k].remove(stud)
+                              except:
+                                  pass
+                          if counter[school] == 0:#removes schools that have no capacity left from remaining students preferences
+                              for j in range(self.nstud):
+                                  try:
+                                      pref[j].remove(school)
+                                  except:
+                                      pass
+                  elif cyc_closed == False:
+                      cyc_school.append(top_school)
+          self.ttc_match = list(match)
           return match
       #
       def boston(self):
@@ -422,7 +560,13 @@ The function below creates both files for a given match (file names are optional
       student_lst.close()
       school_lst.close()
 
-
+  import time
+  priority,capacity,preference = read_sc('school.txt','student.txt')
+  ex = schoolchoice(priority,capacity,preference)
+  time0 = time.clock()
+  ex.gs()
+  time1 = time.clock()
+  print time1-time0
 #+END_SRC
 
 #+RESULTS: scp
@@ -465,12 +609,17 @@ ex = schoolchoice(priority, capacity, preference)
 
 mid = time.clock()
 gsmatch = ex.gs()
-end = time.clock()
+end_gs = time.clock()
+ttcmatch = ex.ttc()
+end_ttc = time.clock()
 save_match(gsmatch)
+save_match(ttcmatch)
 last = time.clock()
 
-print mid-start,'seconds to generate example; ', end-mid,'seconds to solve Gale-Shapley algorithm; ', last-end, 'seconds to save matching'
+print mid-start,'seconds to generate example; ', end_gs-mid,'seconds to solve Gale-Shapley algorithm; ', end_ttc-end_gs,'seconds for TTC algorithm',last-end_ttc, 'seconds to save matching'
 #+END_SRC
 
 
 [fn:gs] Gale, David, and Lloyd S. Shapley. "College admissions and the stability of marriage." American Mathematical Monthly (1962): 9-15.
+
+[fn:ttc] see Abdulkadiroglu, Atila, and Tayfun Sönmez. "School choice: A mechanism design approach." American Economic Review (2003): 729-747. 
